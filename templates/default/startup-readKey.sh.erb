@@ -1,0 +1,139 @@
+#! /bin/bash
+### BEGIN INIT INFO
+# Provides:		  readKey
+# Required-Start:
+# Required-Stop:
+# Default-Start:	 2 3 4 5
+# Default-Stop:	  0 1 6
+# Short-Description: ReadKey service for RaZberry
+# Description:	   Read key on RaZberry plate. One short press activate WebIf, hold down to 10 seconds at start activate factory defautl function. One short led blink - webif activated, Long led shine for 5 seconds - factory default
+### END INIT INFO
+
+# For any questions see issues on https://github.com/aivs/readKey
+# 02.06.2016 version 1.0
+
+<% zway = node['z-way'] -%>
+
+function startReadKey {
+	# Init GPIO PIN 4. 1 - Button not pressed, 0 - Button pressed
+	echo 4 >/sys/class/gpio/unexport
+	echo 4 >/sys/class/gpio/export
+	echo in >/sys/class/gpio/gpio4/direction
+
+	factoryDefaultInProgress=0
+
+	# Button pressed at start
+	if [ $(cat /sys/class/gpio/gpio4/value) -eq "0" ]; then
+		echo heartbeat >/sys/class/leds/led0/trigger
+		timer=0
+		buttonPressed=1
+		while [ "$buttonPressed" -eq "1" ]
+		do
+			# If button is still pressed then timer + 1
+			if [ $(cat /sys/class/gpio/gpio4/value) -eq "0" ]; then
+				buttonPressed=1
+				timer=$[$timer +1]
+				echo "."
+
+				# After 10 seconds start factory default function
+				if [ "$timer" -gt "100" ]; then
+					buttonPressed=0
+					factoryDefaultInProgress=1
+					factoryDefault
+				fi
+
+				sleep 0.1
+			else
+				buttonPressed=0
+			fi
+		done
+		timer=0
+	fi
+
+	echo mmc0>/sys/class/leds/led0/trigger
+
+	# Read key all time
+	while true
+	do
+		if [ "$factoryDefaultInProgress" -eq "0" ]; then
+			# Anti bounce
+			if [ $(cat /sys/class/gpio/gpio4/value) -eq "0" ]; then
+				sleep 0.1
+				buttonPressed=1
+				while [ "$buttonPressed" -eq "1" ]
+				do
+					# Button unPressed
+					if [ $(cat /sys/class/gpio/gpio4/value) -eq "1" ]; then
+						buttonPressed=0
+					fi
+				done
+				activateWebIf
+			fi
+		else
+			while [ "$factoryDefaultInProgress" -eq "1" ]
+			do
+				# Button unPressed
+				if [ $(cat /sys/class/gpio/gpio4/value) -eq "1" ]; then
+					factoryDefaultInProgress=0
+				fi
+			done
+		fi
+	done
+}
+
+function activateWebIf {
+	#WebIf
+	echo 100000 > <%= zway['base'] %>/automation/storage/8084AccessTimeout-6b497208061ec7faae003cdd7f9a035e.json
+	echo "WebIf activated"
+	echo none >/sys/class/leds/led0/trigger
+	echo 1 >/sys/class/leds/led0/brightness
+	sleep 0.3
+	echo 0 >/sys/class/leds/led0/brightness
+	echo mmc0>/sys/class/leds/led0/trigger
+	#Done
+}
+
+function factoryDefault {
+	echo none >/sys/class/leds/led0/trigger
+	echo 1 >/sys/class/leds/led0/brightness
+
+	#Factory Reset
+	/etc/init.d/z-way-server stop
+	rm -rf <%= zway['base'] %>/config/zddx/*
+	rm -rf <%= zway['base'] %>/automation/storage/*
+	if [ -f <%= zway['base'] %>/automation/defaultConfigs/config.json ]; then
+		cp <%= zway['base'] %>/automation/defaultConfigs/config.json <%= zway['base'] %>/automation/storage/configjson-06b2d3b23dce96e1619d2b53d6c947ec.json
+	else
+		cp <%= zway['base'] %>/automation/defaultConfigs/config.json_ttyAMA0 <%= zway['base'] %>/automation/storage/configjson-06b2d3b23dce96e1619d2b53d6c947ec.json
+	fi
+	rm -r -f <%= zway['base'] %>/automation/userModules/*
+	#only supported for RAZBERRY
+	echo -ne "\x01\x04\x00\x42\x01\xB8" > /dev/ttyAMA0
+	echo "RaZberry Factory Default"
+	sleep 5
+	echo 0 >/sys/class/leds/led0/brightness
+	echo mmc0>/sys/class/leds/led0/trigger
+	/etc/init.d/z-way-server start
+	#Done
+}
+
+case "$1" in
+  start)
+	echo "Starting `basename $0`"
+	startReadKey &
+	;;
+  stop)
+	echo "Stopping `basename $0`"
+	killall `basename $0`
+	;;
+  restart)
+	echo "Restarting $0"
+	$0 stop
+	$0 start
+	;;
+  *)
+	echo "Usage: /etc/init.d/readKey {start|stop|restart}"
+	exit 1
+	;;
+esac
+exit 0
