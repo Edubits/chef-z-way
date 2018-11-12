@@ -12,15 +12,12 @@ template '/etc/init.d/z-way-server' do
 	mode '0755'
 end
 
-template '/etc/init.d/readKey' do
-	source 'startup-readKey.sh.erb'
-	mode '0755'
-
-	notifies :reload, 'service[readKey]'
-end
-
 template '/etc/logrotate.d/z-way-server' do
 	source 'log-rotate.erb'
+end
+
+directory '/etc/z-way' do
+	action :create
 end
 
 file '/etc/z-way/box_type' do

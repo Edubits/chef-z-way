@@ -9,7 +9,7 @@ zway = node['z-way']
 new_install_base = "#{zway['base']}-#{zway['version']}"
 
 # Install dependencies
-package ['sharutils', 'tzdata', 'gawk', 'libc-ares2', 'libavahi-compat-libdnssd-dev', 'libarchive-dev']
+package ['sharutils', 'tzdata', 'gawk', 'libc-ares2', 'libavahi-compat-libdnssd-dev', 'libarchive-dev', 'libcurl3']
 
 # Check symlinks
 link '/usr/lib/arm-linux-gnueabihf/libssl.so' do
@@ -58,23 +58,43 @@ if File.exist? zway['base'] and File.realpath("#{zway['base']}") != new_install_
 										 "#{new_install_base}/automation/"
 			FileUtils.cp_r "#{zway['base']}/automation/userModules",
 										 "#{new_install_base}/automation/"
+			FileUtils.cp_r "#{zway['base']}/config/maps",
+										 "#{new_install_base}/config/"
+			FileUtils.cp_r "#{zway['base']}/config/zddx",
+										 "#{new_install_base}/config/"
 		end
 		only_if { File.exists?("#{zway['base']}/automation/storage") }
+	end
+end
+
+ruby_block '/boot/cmdline.txt' do
+	block do
+		file = Chef::Util::FileEdit.new('/boot/cmdline.txt')
+		file.search_file_delete(/console=ttyAMA0,115200/)
+		file.search_file_delete(/kgdboc=ttyAMA0,115200/)
+		file.search_file_delete(/console=serial0,115200/)
+		file.write_file
+	end
+end
+
+# TODO: only on Raspberry Pi 3
+ruby_block '/boot/config.txt' do
+	block do
+		file = Chef::Util::FileEdit.new('/boot/config.txt')
+		file.insert_line_if_no_match(/dtoverlay=pi3-miniuart-bt/, 'dtoverlay=pi3-miniuart-bt')
+		file.write_file
 	end
 end
 
 template "#{Chef::Config[:file_cache_path]}/#{zway['version']}.sh" do
 	source 'install.sh.erb'
 	mode '0755'
-	notifies :run, 'bash[install]', :immediately
+	notifies :run, 'execute[install]', :immediately
 end
 
 # => Install Z-Way
-bash 'install' do
-	cwd Chef::Config[:file_cache_path]
-	user 'root'
-	group 'root'
-	code "sh #{zway['version']}.sh"
+execute 'install' do
+	command "#{Chef::Config[:file_cache_path]}/#{zway['version']}.sh"
 	action :nothing
 end
 
@@ -83,15 +103,7 @@ service 'z-way-server' do
 
 	supports restart: true
 
-	action [:enable, :start]
-end
-
-service 'readKey' do
-	service_name 'readKey'
-
-	supports restart: true
-
-	action [:enable, :start]
+	action [:enable]
 end
 
 link zway['base'] do
